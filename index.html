@@ -30,6 +30,8 @@
   --accent-ink:#04201C; --ok:#6CC58F; --ok-soft:#163124; --warn:#E2B04E; --warn-soft:#3A2C11; --bad:#EE8888; --bad-soft:#3C1C1C;
   --scrim:rgba(0,0,0,.6); --shadow:0 12px 32px rgba(0,0,0,.5); color-scheme:dark }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--f-body);}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -621,7 +623,7 @@ function fbAssets(){ return {
   },
   async delete(id){ fbWrite(FB.F.deleteDoc(FB.F.doc(FB.fs, id.startsWith("pub_") ? "public" : "files", id))); delete FILE_CACHE[id]; return {deleted:true}; }
 }; }
-function authMsg(t, ok){ const m = $("#lgMsg"); m.textContent = t || ""; m.className = "auth-msg" + (ok ? " ok" : ""); }
+function authMsg(t, ok){ const m = $("#lgMsg"); m.textContent = t || ""; m.className = "auth-msg" + (ok ? " ok" : ""); if(t) try{ m.scrollIntoView({block:"nearest"}); }catch(e){} }
 async function fbCheckInit(){
   let init = true; try{ init = (await FB.F.getDoc(FB.F.doc(FB.fs, "meta", "app"))).exists(); }catch(e){ init = true; }
   $("#setupForm").hidden = init; $("#loginForm").hidden = !init; $("#reqBox").hidden = true;
