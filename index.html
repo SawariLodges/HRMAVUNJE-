@@ -337,6 +337,20 @@ body.fb [data-act="loadSamples"]{display:none}
     <p id="lgMsg" class="auth-msg" aria-live="polite"></p>
   </div>
 </div>
+<div id="pinScreen" class="auth" hidden style="z-index:85">
+  <div class="auth-card">
+    <div class="auth-brand"><div class="mark" aria-hidden="true">S</div><div><b>HR Hub</b><span>Locked</span></div></div>
+    <form id="pinForm" novalidate>
+      <h1 id="pinTitle">Enter your PIN</h1>
+      <p id="pinHelp"></p>
+      <div class="f"><label for="pin1">PIN</label><input id="pin1" type="password" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]*"></div>
+      <div class="f" id="pin2Wrap"><label for="pin2">Repeat PIN</label><input id="pin2" type="password" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]*"></div>
+      <button class="btn primary">Continue</button>
+      <button type="button" class="linkbtn" id="pinForgot" style="justify-self:start">Forgot PIN? Sign in with your password</button>
+    </form>
+    <p id="pinMsg" class="auth-msg" aria-live="polite"></p>
+  </div>
+</div>
 <div id="lightHost"></div>
 <div id="toastHost"></div>
 
@@ -712,8 +726,52 @@ async function fbSignedIn(u){
     FB.F.onSnapshot(FB.F.collection(FB.fs, "users"), sn => { state.users = sn.docs.map(d => Object.assign({uid:d.id}, d.data())); rerender(); }, () => {});
     FB.F.onSnapshot(FB.F.collection(FB.fs, "requests"), sn => { state.requests = sn.docs.map(d => Object.assign({uid:d.id}, d.data())); rerender(); }, () => {});
   }
-  startData(); syncStatus();
+  startData(); syncStatus(); pinGate(u.uid);
 }
+/* ---------- PIN lock (works offline): asked when the app opens and after 10 minutes without use ---------- */
+const PIN_IDLE = 10 * 60 * 1000;
+const pinState = {uid:null, lastActive:Date.now(), locked:false};
+const pinKey = () => "hrhub-pin-" + pinState.uid;
+async function pinHash(pin, salt){ const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt + ":" + pin)); return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join(""); }
+function pinStored(){ try{ return JSON.parse(localStorage.getItem(pinKey()) || "null"); }catch(e){ return null; } }
+function pinSave(v){ try{ if(v) localStorage.setItem(pinKey(), JSON.stringify(v)); else localStorage.removeItem(pinKey()); return true; }catch(e){ return false; } }
+function showPin(mode){
+  pinState.locked = true; const sc = $("#pinScreen"); sc.hidden = false; sc.dataset.mode = mode;
+  $("#pinTitle").textContent = mode === "set" ? "Set your PIN" : "Enter your PIN";
+  $("#pinHelp").textContent = mode === "set" ? "Choose a 4 to 6 digit PIN for this device. The HR Hub asks for it each time it opens and after 10 minutes without use, also when offline." : (state.me && state.me.name ? "Signed in as " + state.me.name + "." : "");
+  $("#pin2Wrap").hidden = mode !== "set"; $("#pinForgot").hidden = mode === "set";
+  $("#pin1").value = ""; $("#pin2").value = ""; $("#pinMsg").textContent = "";
+  setTimeout(() => { try{ $("#pin1").focus(); }catch(e){} }, 60);
+}
+function hidePin(){ pinState.locked = false; $("#pinScreen").hidden = true; pinState.lastActive = Date.now(); }
+function pinGate(uidv){ pinState.uid = uidv; if(!window.crypto || !crypto.subtle){ return; } if(pinStored()) showPin("unlock"); else showPin("set"); }
+function pinIdleCheck(){ if(state.fb && pinState.uid && !pinState.locked && pinStored() && Date.now() - pinState.lastActive > PIN_IDLE) showPin("unlock"); }
+["pointerdown","keydown","touchstart","wheel"].forEach(t => addEventListener(t, () => { if(!pinState.locked) pinState.lastActive = Date.now(); }, {passive:true}));
+setInterval(pinIdleCheck, 30000);
+document.addEventListener("visibilitychange", () => { if(document.visibilityState === "visible") pinIdleCheck(); });
+document.addEventListener("submit", async ev => {
+  if(ev.target.id !== "pinForm") return;
+  ev.preventDefault(); ev.stopImmediatePropagation();
+  const m = $("#pinMsg"), mode = $("#pinScreen").dataset.mode, p1 = $("#pin1").value.trim();
+  m.className = "auth-msg";
+  if(!/^\d{4,6}$/.test(p1)){ m.textContent = "Use 4 to 6 digits."; return; }
+  if(mode === "set"){
+    if(p1 !== $("#pin2").value.trim()){ m.textContent = "The two PINs don't match."; return; }
+    const salt = uid() + uid();
+    if(!pinSave({salt, hash:await pinHash(p1, salt), fails:0})){ hidePin(); toast("This browser can't store a PIN. Use Sign out when you leave the computer."); return; }
+    hidePin(); toast("PIN set");
+  } else {
+    const st = pinStored(); if(!st){ showPin("set"); return; }
+    if(await pinHash(p1, st.salt) === st.hash){ st.fails = 0; pinSave(st); hidePin(); return; }
+    st.fails = (st.fails || 0) + 1; pinSave(st);
+    if(st.fails >= 5){ pinSave(null); m.textContent = "Too many wrong PINs. Sign in again with your password."; setTimeout(() => FB && FB.U.signOut(FB.auth), 1200); return; }
+    m.textContent = `Wrong PIN. ${5 - st.fails} ${5 - st.fails === 1 ? "try" : "tries"} left.`; $("#pin1").value = "";
+  }
+}, true);
+document.addEventListener("click", ev => {
+  if(ev.target.id === "pinForgot"){ pinSave(null); if(FB) FB.U.signOut(FB.auth); }
+}, true);
+
 const UM = {
   async create(d){
     if(!navigator.onLine) return {ok:false, text:"Adding a person needs internet."};
@@ -768,7 +826,8 @@ function sheetAccount(){
     <div class="f full"><label for="pwCur">Current password</label><input id="pwCur" type="password" autocomplete="current-password" required></div>
     <div class="f"><label for="pwNew">New password</label><input id="pwNew" type="password" autocomplete="new-password" required minlength="6"></div>
     <div class="f"><label for="pwNew2">Repeat new password</label><input id="pwNew2" type="password" autocomplete="new-password" required></div>
-  </fieldset><p class="hint" id="pwMsg" style="margin:0"></p><div class="formbar"><button type="button" class="btn" data-act="signOut">Sign out</button><button class="btn primary">Change password</button></div></form></div></div>`;
+  </fieldset><p class="hint" id="pwMsg" style="margin:0"></p><div class="formbar"><button type="button" class="btn" data-act="signOut">Sign out</button><button class="btn primary">Change password</button></div></form>
+  <section class="panel h-teal"><h2><span><span class="dot"></span>PIN lock</span></h2><p class="muted" style="margin:0 0 10px;font-size:14px">This device asks for your PIN when the HR Hub opens and after 10 minutes without use.</p><button type="button" class="btn" data-act="changePin">Change PIN</button></section></div></div>`;
 }
 
 /* ---------- State ---------- */
@@ -2040,6 +2099,7 @@ document.addEventListener("click", async ev => {
   if(act === "readContract") return readContractStored();
   if(act === "signOut") return FB && FB.U.signOut(FB.auth);
   if(act === "myAccount") return openSheet({kind:"account"});
+  if(act === "changePin"){ pinSave(null); closeSheet(); showPin("set"); return; }
   if(act === "openPdf"){ try{ const u = await fileURL(a.dataset.aid); const b = await (await fetch(u)).blob(); window.open(URL.createObjectURL(b), "_blank"); }catch(x){ toast("The PDF couldn't be opened."); } return; }
   if(act === "approveReq"){ const r = (state.requests||[]).find(x=>x.uid===id); if(r) return UM.approve(r, ($("#rq-"+id)||{}).value || "staff"); return; }
   if(act === "dismissReq"){ const r = (state.requests||[]).find(x=>x.uid===id); if(r) return UM.dismiss(r); return; }
