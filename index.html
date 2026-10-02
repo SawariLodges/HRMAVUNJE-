@@ -561,6 +561,7 @@ const fbFriendly = e => {
   if(/email-already-in-use/.test(c)) return "This email already has a login. Ask them to sign in to the HR Hub and press Ask for access.";
   if(/weak-password/.test(c)) return "Password too weak: use at least 6 characters.";
   if(/too-many-requests/.test(c)) return "Too many tries. Wait a few minutes and try again.";
+  if(/operation-not-allowed|configuration-not-found/.test(c)) return "Email/Password sign-in isn't enabled in Firebase Authentication yet.";
   if(/network|unavailable/.test(c)) return "No internet connection. Signing in for the first time needs internet.";
   if(/permission/i.test(c + (e && e.message))) return "Not allowed by the database rules.";
   return "Something went wrong (" + (c || (e && e.message)) + ").";
@@ -656,16 +657,25 @@ async function fbStart(){
     ev.preventDefault(); authMsg("");
     const name = $("#suName").value.trim(), email = $("#suEmail").value.trim(), pass = $("#suPass").value;
     if(!name || !email || !pass){ authMsg("Fill in your name, email and password."); return; }
-    $("#suGo").disabled = true; fbBootstrapping = true;
+    $("#suGo").disabled = true; $("#suGo").textContent = "Setting up…"; fbBootstrapping = true;
+    const slow = (p, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej({code:"slow", message:what}), 20000))]);
     try{
       let cred;
-      try{ cred = await FB.U.createUserWithEmailAndPassword(FB.auth, email, pass); }
-      catch(e){ if(/email-already-in-use/.test(e.code)) cred = await FB.U.signInWithEmailAndPassword(FB.auth, email, pass); else throw e; }
-      await FB.F.setDoc(FB.F.doc(FB.fs, "users", cred.user.uid), {name, email:cred.user.email, role:"admin", disabled:false, createdAt:new Date().toISOString()});
-      await FB.F.setDoc(FB.F.doc(FB.fs, "meta", "app"), {initialized:true, by:cred.user.uid, at:new Date().toISOString()});
+      authMsg("Creating your login…", true);
+      try{ cred = await slow(FB.U.createUserWithEmailAndPassword(FB.auth, email, pass), "login"); }
+      catch(e){ if(/email-already-in-use/.test(e.code)) cred = await slow(FB.U.signInWithEmailAndPassword(FB.auth, email, pass), "login"); else throw e; }
+      authMsg("Saving you as administrator…", true);
+      await slow(FB.F.setDoc(FB.F.doc(FB.fs, "users", cred.user.uid), {name, email:cred.user.email, role:"admin", disabled:false, createdAt:new Date().toISOString()}), "database");
+      await slow(FB.F.setDoc(FB.F.doc(FB.fs, "meta", "app"), {initialized:true, by:cred.user.uid, at:new Date().toISOString()}), "database");
       fbBootstrapping = false; fbSignedIn(cred.user);
-    }catch(e){ fbBootstrapping = false; authMsg(/permission/i.test(String(e && (e.code || e.message))) ? "The Firestore rules for the HR Hub haven't been added yet. Add them (see the setup guide), then try again." : fbFriendly(e)); try{ await FB.U.signOut(FB.auth); }catch(_){} }
-    $("#suGo").disabled = false;
+    }catch(e){ fbBootstrapping = false;
+      const txt = String(e && (e.code || e.message));
+      authMsg(e && e.code === "slow" ? (e.message === "login" ? "Firebase didn't answer when creating the login. Check that Email/Password sign-in is enabled in Firebase Authentication, then try again." : "The login was created, but the database didn't answer. Check that the Firestore database exists and its rules are published, then try again with the same email and password.")
+        : /permission/i.test(txt) ? "Firebase refused to save: the Firestore rules for the HR Hub aren't published yet. Publish them, then try again with the same email and password."
+        : /operation-not-allowed|configuration-not-found/.test(txt) ? "Email/Password sign-in isn't enabled in Firebase Authentication yet."
+        : fbFriendly(e));
+      try{ await FB.U.signOut(FB.auth); }catch(_){} }
+    $("#suGo").disabled = false; $("#suGo").textContent = "Become administrator";
   });
   $("#reqGo").addEventListener("click", async () => {
     const u = FB.auth.currentUser; if(!u) return;
