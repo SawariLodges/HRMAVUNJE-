@@ -1,5 +1,5 @@
 /* Sawari HR Hub: keeps the app available offline. Records sync through Firestore's own offline storage. */
-const CACHE = "hrhub-v1";
+const CACHE = "hrhub-v2";
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"])).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", e => {
